@@ -1,0 +1,8 @@
+serial:
+  port: COM7
+  baud-rate: 115200
+  data-bits: 8
+  parity: N
+  stop-bits: 1
+http:
+  bind-address: :3000

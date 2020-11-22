@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCRM Visualization</title>
+    <style>
+        .form-wrapper {
+            display: flex;
+            align-items: stretch;
+        }
+
+        .form {
+            flex: 1 1;
+            padding: 8px;
+            margin: 0 4px;
+            border: 1px solid #efefef;
+        }
+
+        .form>h3 {
+            margin-top: 0;
+        }
+
+        .form-entry {
+            width: 100%;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .form-entry+.form-entry {
+            margin-top: 10px;
+        }
+
+        .form-entry>label {
+            display: block;
+            width: 150px;
+            flex-grow: 0;
+        }
+
+        .form-entry>label {
+            display: block;
+            width: 150px;
+            flex-shrink: 0;
+        }
+
+        .form-entry>.form-control {
+            display: block;
+            flex: 1 1;
+            min-width: 0;
+        }
+
+        .form-entry>button {
+            display: block;
+            flex: 1 1;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <h3 v-text="title"></h3>
+        <div class="form-wrapper">
+            <form class="form">
+                <h3>Configuration</h3>
+
+                <div class="form-entry">
+                    <label for="p_size">Data size:</label>
+                    <input class="form-control" id="p_size" v-model="params.size">
+                </div>
+
+                <div class="form-entry">
+                    <label for="p_rsel">Resistance value:</label>
+                    <select class="form-control" id="p_rsel" v-model="params.rsel">
+                        <option value="0">100Ω</option>
+                        <option value="1">1kΩ</option>
+                        <option value="2">10kΩ</option>
+                        <option value="3">100kΩ</option>
+                    </select>
+                </div>
+
+                <div class="form-entry">
+                    <label for="p_ig">Current gain:</label>
+                    <select class="form-control" id="p_ig" v-model="params.ig">
+                        <option value="0">1x</option>
+                        <option value="1">2x</option>
+                        <option value="2">4x</option>
+                        <option value="3">5x</option>
+                        <option value="4">8x</option>
+                        <option value="5">10x</option>
+                        <option value="6">16x</option>
+                        <option value="7">32x</option>
+                    </select>
+                </div>
+
+                <div class="form-entry">
+                    <label for="p_vg">Voltage gain:</label>
+                    <select class="form-control" id="p_vg" v-model="params.vg">
+                        <option value="0">1x</option>
+                        <option value="1">2x</option>
+                        <option value="2">4x</option>
+                        <option value="3">5x</option>
+                        <option value="4">8x</option>
+                        <option value="5">10x</option>
+                        <option value="6">16x</option>
+                        <option value="7">32x</option>
+                    </select>
+                </div>
+                <div class="form-entry">
+                    <button @click="fetchData()" :disabled="fetching">Reload</button>
+                </div>
+            </form>
+            <form class="form">
+                <h3>Impedance characteristic</h3>
+
+                <div class="form-entry">
+                    <label for="i_amp">Current amptitude:</label>
+                    <input class="form-control" id="i_amp" v-model="iAttrs.amp" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="i_phase">Current phase:</label>
+                    <input class="form-control" id="i_phase" v-model="iAttrs.phase * 180 / Math.PI" disabled>
+                </div>
+
+                <div class="form-entry">
+                    <label for="v_amp">Voltage amptitude:</label>
+                    <input class="form-control" id="v_amp" v-model="vAttrs.amp" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="v_phase">Voltage phase:</label>
+                    <input class="form-control" id="v_phase" v-model="vAttrs.phase * 180 / Math.PI" disabled>
+                </div>
+
+                <div class="form-entry">
+                    <label for="z_theta">θ:</label>
+                    <input class="form-control" id="z_theta" v-model="zAttrs.theta" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="z_rval">R:</label>
+                    <input class="form-control" id="z_rval" v-model="zAttrs.rval" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="z_xval">X:</label>
+                    <input class="form-control" id="z_xval" v-model="zAttrs.xval" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="z_cval">C:</label>
+                    <input class="form-control" id="z_cval" v-model="zAttrs.cval" disabled>
+                </div>
+                <div class="form-entry">
+                    <label for="z_lval">L:</label>
+                    <input class="form-control" id="z_lval" v-model="zAttrs.lval" disabled>
+                </div>
+            </form>
+        </div>
+        <div ref="chart" style="width:100%;height:500px;margin-top:20px"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios@0.21.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.12"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/dist/echarts.min.js"></script>
+    <script>
+        var units = ['p', 'n', 'u', 'm', '', 'k', 'M'];
+        var f = 100000;
+        var adc_cycles = 1.5;
+        var adc_f = 72000000;
+        var t = (1000000 / f) / ((12.5 + adc_cycles) * 1000000 / adc_f);
+        var cx = Math.round(t * 8);
+
+        function formatValue(value) {
+            for (var i = 0; i < units.length - 1; i++) {
+                if (Math.abs(value) < 1000) {
+                    return (Math.round(value * 1000) / 1000) + units[i];
+                } else {
+                    value /= 1000;
+                }
+            }
+            return (Math.round(value * 1000) / 1000) + units[units.length - 1];
+        }
+
+        function valueOfGain(n) {
+            return [1, 2, 4, 5, 8, 10, 16, 32][1 * n];
+        }
+
+        function valueOfR(n) {
+            return [100, 1000, 10000, 100000][1 * n];
+        }
+
+        function resolve(values, gain) {
+            var max = -2048,
+                min = 2048,
+                eval = 0,
+                amp = 0,
+                vals = [];
+            values.forEach((y, x) => {
+                if (y > max) {
+                    max = y;
+                }
+                if (y < min) {
+                    min = y;
+                }
+            });
+            amp = (max - min) / 2;
+            eval = min + amp;
+
+            var xmax = -2048,
+                xmin = 2048,
+                ymax = -2048,
+                ymin = 2048,
+                xeval = 0;
+            yeval = 0;
+            values.forEach((y, x) => {
+                var sin = Math.sin((x / t) * 2 * Math.PI);
+                var cos = Math.cos((x / t) * 2 * Math.PI);
+                var ay = y - eval;
+                vals.push(ay);
+                xmax = Math.max(xmax, ay * cos);
+                xmin = Math.min(xmin, ay * cos);
+                ymax = Math.max(ymax, ay * sin);
+                ymin = Math.min(ymin, ay * sin);
+            });
+            xeval = xmin + (xmax - xmin) / 2;
+            yeval = ymin + (ymax - ymin) / 2;
+            var phase = Math.atan2(yeval, xeval);
+            return {
+                amp: amp / gain,
+                vals,
+                phase
+            };
+        }
+
+        new Vue({
+            data: {
+                title: 'LCRM Visualization',
+                chart: null,
+                params: {
+                    size: '' + cx,
+                    rsel: '0',
+                    ig: '0',
+                    vg: '0'
+                },
+                iAttrs: {
+                    amp: '0',
+                    vals: [],
+                    phase: 0
+                },
+                vAttrs: {
+                    amp: '0',
+                    vals: [],
+                    phase: 0
+                },
+                zAttrs: {
+                    theta: '0',
+                    rval: '0',
+                    xval: '0',
+                    cval: '0',
+                    lval: '0'
+                },
+                fetching: false
+            },
+            mounted() {
+                this.chart = echarts.init(this.$refs.chart);
+                var option = {
+                    animation: false,
+                    grid: {
+                        top: 40,
+                        left: 50,
+                        right: 40,
+                        bottom: 50
+                    },
+                    legend: {
+                        data: ['Voltage', 'Current']
+                    },
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: {
+                            type: 'cross',
+                            label: {
+                                backgroundColor: '#6a7985'
+                            }
+                        }
+                    },
+                    xAxis: {
+                        name: 'x',
+                        minorTick: {
+                            show: true
+                        },
+                        splitLine: {
+                            lineStyle: {
+                                color: '#999'
+                            }
+                        },
+                        minorSplitLine: {
+                            show: true,
+                            lineStyle: {
+                                color: '#ddd'
+                            }
+                        }
+                    },
+                    yAxis: {
+                        name: 'y',
+                        min: -2048,
+                        max: 2048,
+                        minorTick: {
+                            show: true
+                        },
+                        splitLine: {
+                            lineStyle: {
+                                color: '#999'
+                            }
+                        },
+                        minorSplitLine: {
+                            show: true,
+                            lineStyle: {
+                                color: '#ddd'
+                            }
+                        }
+                    },
+                    dataZoom: [{
+                        show: true,
+                        type: 'inside',
+                        filterMode: 'none',
+                        xAxisIndex: [0],
+                        startValue: 0,
+                        endValue: cx
+                    }, {
+                        show: true,
+                        type: 'inside',
+                        filterMode: 'none',
+                        yAxisIndex: [0],
+                        startValue: -2048,
+                        endValue: 2048
+                    }],
+                    series: [{
+                            name: 'Voltage',
+                            type: 'line',
+                            showSymbol: false,
+                            clip: true,
+                            data: []
+                        },
+                        {
+                            name: 'Current',
+                            type: 'line',
+                            showSymbol: false,
+                            clip: true,
+                            data: []
+                        }
+                    ]
+                };
+                this.chart.setOption(option);
+                this.fetchData();
+            },
+            methods: {
+                fetchData() {
+                    this.fetching = true;
+                    axios.get('/api/samples', {
+                            params: this.params
+                        })
+                        .then(res => {
+                            if (res.data.status == 'ok') {
+                                this.applyData(res.data.data);
+                            } else {
+                                alert(res.data.reason);
+                            }
+                        })
+                        .finally(() => this.fetching = false);
+                },
+                applyData(data) {
+                    Object.assign(this.vAttrs, resolve(data.map(item => item[0]), valueOfGain(this.params.vg)));
+                    Object.assign(this.iAttrs, resolve(data.map(item => item[1]), valueOfGain(this.params.ig)));
+                    var za = this.vAttrs.amp / (this.iAttrs.amp / valueOfR(this.params.rsel));
+                    var theta = this.iAttrs.phase - this.vAttrs.phase + Math.PI;
+                    while (theta > Math.PI) {
+                        theta -= Math.PI;
+                    }
+                    this.zAttrs.theta = theta * 180 / Math.PI;
+                    this.zAttrs.rval = formatValue(1000000000000 * za * Math.cos(theta)) + 'Ω';
+                    this.zAttrs.xval = formatValue(1000000000000 * za * Math.sin(theta)) + 'Ω';
+                    this.zAttrs.lval = formatValue(1000000000000 * za * Math.sin(theta) / 2 / Math.PI / f) + 'H';
+                    this.zAttrs.cval = formatValue(1000000000000 / (za * Math.sin(theta) * 2 * Math.PI * f)) + 'F';
+
+                    this.chart.setOption({
+                        series: [{
+                                data: this.vAttrs.vals.map((y, x) => ([x, y]))
+                            },
+                            {
+                                data: this.iAttrs.vals.map((y, x) => ([x, y]))
+                            }
+                        ]
+                    })
+                }
+            }
+        }).$mount('#app')
+    </script>
+</body>
+
+</html>
